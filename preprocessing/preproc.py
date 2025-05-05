@@ -125,7 +125,7 @@ for col in numericalColumns:  ######
 #dataframe.to_csv('processed_data.csv', index=False)
 
 #################################################### end
-print(dataframe.info())
+#print(dataframe.info())
 
 # tasks to do:
 # EDA analysis again to know relations between target and which columns to drop
