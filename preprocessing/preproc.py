@@ -2,15 +2,15 @@ import string
 import pandas as pd
 import numpy as np
 from category_encoders import TargetEncoder
-import matplotlib.pyplot as plt
-import seaborn as sns
+from imblearn.over_sampling import SMOTE
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 import warnings as wr
 
-data = pd.read_csv("C:/Users/DELL/University/Ai Project/dataset_diabetes/diabetic_data.csv")
-mappingFile22 = pd.read_csv("C:/Users/DELL/University/Ai Project/dataset_diabetes/IDs_mapping.csv")
+data = pd.read_csv("C:/Users/lilac/PycharmProjects/pythonProject1/dataset_diabetes/diabetic_data.csv")
+mappingFile22 = pd.read_csv("C:/Users/lilac/PycharmProjects/pythonProject1/dataset_diabetes/IDs_mapping.csv")
 dataframe = pd.DataFrame(data)
 columnsToDrop=[
     'metformin-pioglitazone',
@@ -26,18 +26,7 @@ columnsToDrop=[
     'number_emergency'
 ]
 dataframe.drop(columns=columnsToDrop, axis=1, inplace=True)
-
-# converting age column as numerical
-def convert_age_range(age_range):
-    numbers = age_range.strip("[]()").split('-') # convert age range values with its meadian value
-    return (int(numbers[0]) + int(numbers[1])) // 2
-dataframe['age'] = dataframe['age'].apply(convert_age_range)
-
-# converting columns with unkown values into null
-columnToConvert=['diag_1','diag_2', 'diag_3']
-dataframe[columnToConvert] = dataframe[columnToConvert].apply(
-    lambda col: pd.to_numeric(col, errors='coerce'))
-
+numerical_cols = dataframe.select_dtypes(include=['int64', 'float64']).columns
 # filling categorical nulls with mode
 dataframe.replace(['Unknown/Invalid','?', 'NA', 'N/A', 'None', ''], np.nan, inplace=True)
 strNullColumns = [col for col in dataframe.columns if dataframe[col].dtype in ['object'] and dataframe[col].isnull().any()]
@@ -88,10 +77,27 @@ columnsdrop = [
 ]
 dataframe.drop(columns=columnsdrop, inplace=True)
 
+# clipping outliers
+
+numericalColumns = dataframe.select_dtypes(include=['int64','float64']).columns
+Q1 = dataframe[numericalColumns].quantile(0.25)
+Q3 = dataframe[numericalColumns].quantile(0.75)
+IQR = Q3 - Q1
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+for col in numericalColumns:
+    dataframe[col] = dataframe[col].clip(lower=lower_bound[col], upper=upper_bound[col]) # clip normal data without the outliers
+
+print(dataframe[numericalColumns].head())
+# Normalization
+for col in numericalColumns:
+ dataframe[col]=((dataframe[col]-dataframe[col].min())/ (dataframe[col].max()-dataframe[col].min()))
+
 # encoding categorical columns
 # encoding target column
 dataframe['readmitted'] = dataframe['readmitted'].apply(lambda x: 1 if x == '<30' else 0) # encoding target column
-y = dataframe['readmitted']
+Y = dataframe['readmitted']
+dataframe=dataframe.drop('readmitted', axis=1)
 
 # one-hot encoding for mapped columns & renaming them
 dataframe=pd.get_dummies(dataframe,columns=mappedColumns,dtype=int)
@@ -124,24 +130,14 @@ dataframe.rename(columns=column_renames, inplace=True)
 # encoding rest of categorical columns
 categorical_cols = dataframe.select_dtypes(include='object').columns
 categorical_cols= dataframe[categorical_cols].drop('medical_specialty', axis=1)
-le = LabelEncoder()
-for col in categorical_cols:
- dataframe[col] = le.fit_transform(dataframe[col])
 
-# clipping outliers
-dataframe=dataframe.drop('readmitted', axis=1)
-numericalColumns = dataframe.select_dtypes(include=['int64','float64']).columns
-Q1 = dataframe[numericalColumns].quantile(0.25)
-Q3 = dataframe[numericalColumns].quantile(0.75)
-IQR = Q3 - Q1
-lower_bound = Q1 - 1.5 * IQR
-upper_bound = Q3 + 1.5 * IQR
-for col in numericalColumns:
-    dataframe[col] = dataframe[col].clip(lower=lower_bound[col], upper=upper_bound[col]) # clip normal data without the outliers
+# le = LabelEncoder()
+# for col in categorical_cols:
+#  dataframe[col] = le.fit_transform(dataframe[col])
 
 # splitting data
 X = dataframe
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 
 # filling numerical columns nulls with mean
 numNullColumns = [col for col in X_train.columns if X_train[col].dtype in ['int64', 'float64']]
@@ -150,14 +146,22 @@ X_train[numNullColumns]=X_train[numNullColumns].fillna(X_train[numNullColumns].m
 X_test[numNullColumns]=X_test[numNullColumns].fillna(X_train[numNullColumns].mean())
 
 # target encoding for medical_specialty column
-encoder=TargetEncoder(cols=['medical_specialty'])
-encoder.fit(X_train[['medical_specialty']],y_train) # calculate target means with train set & target column
-X_train['medical_specialty']= encoder.transform(X_train[['medical_specialty']]) # applying encoding using .fit means value
-X_test['medical_specialty']= encoder.transform(X_test[['medical_specialty']])
-encoded_med_specialty = pd.concat([X_train['medical_specialty'], X_test['medical_specialty']]).sort_index()
-dataframe['medical_specialty'] = encoded_med_specialty # load the new value of encoded column back into dataframe
+targetEncodedColumn = ['medical_specialty', 'age', 'diag_1', 'diag_2', 'diag_3' ]
+all_target_cols = list(set(categorical_cols.columns.tolist() + targetEncodedColumn))
 
-print(X_train.dtypes)
-print(y_train.dtypes)
-print(dataframe.columns.shape[0])
-print(dataframe.columns)
+
+encoder=TargetEncoder(cols=all_target_cols)
+encoder.fit(X_train[all_target_cols],Y_train) # calculate target means with train set & target column
+X_train[all_target_cols]= encoder.transform(X_train[all_target_cols]) # applying encoding using .fit means value
+X_test[all_target_cols]= encoder.transform(X_test[all_target_cols])
+encoded_all = pd.concat([X_train[all_target_cols], X_test[all_target_cols]]).sort_index()
+dataframe[all_target_cols] = encoded_all # load the new value of encoded column back into dataframe
+
+
+X_combined = pd.concat([X_train, X_test], axis=0)
+Y_combined = pd.concat([Y_train, Y_test], axis=0)
+X_combined['readmitted'] = Y_combined
+dataframe_copy = X_combined.copy()
+print(dataframe_copy.info())
+#print(numerical_cols)
+
